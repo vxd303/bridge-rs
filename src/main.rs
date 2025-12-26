@@ -3,7 +3,6 @@
 use std::{
     env,
     future::IntoFuture,
-    io,
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
@@ -140,7 +139,6 @@ async fn handle_websocket(ws: WebSocket) {
 
 const ARG_AUTO_RUN: &str = "--auto-run";
 
-#[cfg(debug_assertions)]
 fn proxy_host() -> &'static str {
     web_url()
 }
