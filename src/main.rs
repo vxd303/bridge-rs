@@ -29,6 +29,7 @@ use tokio::{
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -234,10 +235,12 @@ async fn main() {
     let _static_server = {
         let token = token.clone();
         let web_router = Router::new().fallback_service(
-            get_service(ServeDir::new("web")).handle_error(|error: io::Error| async move {
-                println!("static server error: {}", error);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
-            }),
+            get_service(ServeDir::new("web"))
+                .handle_error(|error: io::Error| async move {
+                    println!("static server error: {}", error);
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
+                })
+                .boxed(),
         );
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
