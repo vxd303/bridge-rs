@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tango Bridge Local Console</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>YA-WebADB Local Console</h1>
+        <span id="status" class="badge">Disconnected</span>
+      </header>
+
+      <section class="card">
+        <label class="stack">
+          <span>WebSocket endpoint</span>
+          <input id="endpoint" type="text" value="ws://localhost:15037/bridge/" />
+        </label>
+        <div class="actions">
+          <button id="connect">Connect</button>
+          <button id="disconnect" disabled>Disconnect</button>
+        </div>
+      </section>
+
+      <section class="card grid">
+        <div>
+          <h2>Device info</h2>
+          <pre id="device-info">No device connected.</pre>
+        </div>
+        <div>
+          <h2>Screen mirror</h2>
+          <p>Status: <span id="mirror-status">Idle</span></p>
+          <canvas id="screen" width="720" height="1280"></canvas>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Shell</h2>
+        <div class="actions">
+          <input id="shell-command" type="text" placeholder="Enter shell command" />
+          <button id="run-shell" disabled>Run</button>
+        </div>
+        <textarea id="shell-output" readonly rows="10"></textarea>
+      </section>
+    </main>
+  </body>
+</html>

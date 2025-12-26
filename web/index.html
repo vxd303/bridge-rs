@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tango Bridge Web Console</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Tango Bridge</h1>
+        <p>Powered by <a href="https://github.com/yume-chan/ya-webadb" target="_blank" rel="noreferrer">ya-webadb</a></p>
+      </div>
+      <div id="status" class="badge">Disconnected</div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Connect to bridge</h2>
+        <label for="endpoint">WebSocket endpoint</label>
+        <input id="endpoint" type="text" value="ws://localhost:15037/bridge/" />
+        <div class="actions">
+          <button id="connect">Connect</button>
+          <button id="disconnect" disabled>Disconnect</button>
+        </div>
+        <p class="hint">
+          The endpoint should point to the bridge WebSocket (port 15037).
+          This page runs entirely locally and keeps traffic on your machine.
+        </p>
+      </section>
+
+      <section>
+        <h2>Device overview</h2>
+        <div id="device-info" class="card">No device connected.</div>
+      </section>
+
+      <section>
+        <h2>Screen mirror (scrcpy)</h2>
+        <p class="hint">
+          Uses <code>@yume-chan/adb-scrcpy</code> to stream video via WebSocket. Quality depends on your device and connection.
+        </p>
+        <div id="mirror-container" class="card">
+          <canvas id="screen"></canvas>
+          <div id="mirror-status">Idle</div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Shell</h2>
+        <p class="hint">Run simple shell commands on the connected device.</p>
+        <textarea id="shell-output" readonly></textarea>
+        <div class="actions">
+          <input id="shell-command" type="text" value="getprop ro.build.version.release" />
+          <button id="run-shell" disabled>Run</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

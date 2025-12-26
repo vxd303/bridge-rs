@@ -15,7 +15,8 @@ use axum::{
         ws::{Message, WebSocket},
         Request, WebSocketUpgrade,
     },
-    response::{IntoResponse, Response},
+    http::header,
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
@@ -36,8 +37,51 @@ use tray_icon::{
 
 mod adb;
 
+static WEB_URL: OnceLock<String> = OnceLock::new();
+
+fn web_url() -> &'static str {
+    WEB_URL.get_or_init(|| {
+        env::var("TANGO_WEB_URL").unwrap_or_else(|_| "http://localhost:8000".into())
+    })
+}
+
 fn start_browser() {
-    open::that_detached("https://app.tangoapp.dev/?desktop=true").unwrap();
+    open::that_detached(&format!("{}/?desktop=true", web_url())).unwrap();
+}
+
+const INDEX_HTML: &str = include_str!("../web/index.html");
+const MAIN_JS: &str = include_str!("../web/main.js");
+const STYLES_CSS: &str = include_str!("../web/styles.css");
+
+fn build_web_router() -> Router {
+    Router::new()
+        .route("/", get(|| async { Html(INDEX_HTML) }))
+        .route("/index.html", get(|| async { Html(INDEX_HTML) }))
+        .route(
+            "/main.js",
+            get(|| async { ([(header::CONTENT_TYPE, "application/javascript")], MAIN_JS) }),
+        )
+        .route(
+            "/styles.css",
+            get(|| async { ([(header::CONTENT_TYPE, "text/css")], STYLES_CSS) }),
+        )
+        .fallback(get(|| async { Html(INDEX_HTML) }))
+}
+
+fn should_embed_web() -> bool {
+    env::var("BRIDGE_EMBED_WEB")
+        .map(|v| v != "0")
+        .unwrap_or(true)
+}
+
+fn web_bind_addr() -> String {
+    let url = Url::parse(web_url()).unwrap();
+    let port = url.port_or_known_default().unwrap_or(8000);
+    let host = url
+        .host_str()
+        .filter(|host| host != &"localhost")
+        .unwrap_or("0.0.0.0");
+    format!("{host}:{port}")
 }
 
 async fn handle_websocket(ws: WebSocket) {
@@ -95,10 +139,9 @@ async fn handle_websocket(ws: WebSocket) {
 
 const ARG_AUTO_RUN: &str = "--auto-run";
 
-#[cfg(debug_assertions)]
-const PROXY_HOST: &str = "https://tangoapp.dev";
-#[cfg(not(debug_assertions))]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+fn proxy_host() -> &'static str {
+    web_url()
+}
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -107,7 +150,7 @@ async fn proxy_request(request: Request) -> Result<Response, Response> {
     println!("proxy_request: {} {}", request.method(), request.uri());
 
     let url = Url::options()
-        .base_url(Some(&Url::parse(PROXY_HOST).unwrap()))
+        .base_url(Some(&Url::parse(proxy_host()).unwrap()))
         .parse(&request.uri().to_string())
         .map_err(|_| (StatusCode::BAD_REQUEST, "Bad Request").into_response())?;
 
@@ -199,6 +242,8 @@ async fn main() {
                         .allow_origin(
                             [
                                 "http://localhost:3002",
+                                "http://localhost:8000",
+                                "http://127.0.0.1:8000",
                                 "https://tangoapp.dev",
                                 "https://app.tangoapp.dev",
                                 "https://beta.tangoapp.dev",
@@ -226,6 +271,20 @@ async fn main() {
                 .await
         });
         Some(server)
+    };
+
+    let _static_server = if should_embed_web() {
+        let token = token.clone();
+        let bind = web_bind_addr();
+        Some(tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
+            axum::serve(listener, build_web_router())
+                .with_graceful_shutdown(token.cancelled_owned())
+                .into_future()
+                .await
+        }))
+    } else {
+        None
     };
     println!("server started on thread {:?}", thread::current().id());
 

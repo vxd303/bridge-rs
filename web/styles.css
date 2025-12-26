@@ -1,0 +1,144 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0b1520;
+  --surface: #111c28;
+  --border: #203247;
+  --accent: #00b4d8;
+  --text: #e6f1ff;
+  --muted: #9fb2cc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0d1824;
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: inherit;
+}
+
+textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
+button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #16253a;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.card {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 120px;
+}
+
+#mirror-container {
+  display: grid;
+  gap: 12px;
+}
+
+#screen {
+  width: 100%;
+  background: #000;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+#mirror-status {
+  color: var(--muted);
+}
+
+.badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #1b2c42;
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.badge.connected {
+  background: rgba(0, 180, 216, 0.15);
+  color: #75d7ff;
+  border-color: rgba(0, 180, 216, 0.35);
+}
