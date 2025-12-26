@@ -29,7 +29,7 @@ use tokio::{
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
-use tower::ServiceExt;
+use tower::util::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
