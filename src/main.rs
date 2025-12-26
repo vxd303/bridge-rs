@@ -240,7 +240,7 @@ async fn main() {
                     println!("static server error: {}", error);
                     (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
                 })
-                .boxed(),
+                .boxed_clone(),
         );
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
