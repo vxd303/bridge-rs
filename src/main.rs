@@ -16,8 +16,9 @@ use axum::{
         ws::{Message, WebSocket},
         Request, WebSocketUpgrade,
     },
-    response::{IntoResponse, Response},
-    routing::{get, get_service},
+    http::header,
+    response::{Html, IntoResponse, Response},
+    routing::get,
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -29,8 +30,7 @@ use tokio::{
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
-use tower::util::ServiceExt;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::cors::CorsLayer;
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder, TrayIconEvent,
@@ -40,6 +40,25 @@ mod adb;
 
 fn start_browser() {
     open::that_detached("http://localhost:8000/?desktop=true").unwrap();
+}
+
+const INDEX_HTML: &str = include_str!("../web/index.html");
+const MAIN_JS: &str = include_str!("../web/main.js");
+const STYLES_CSS: &str = include_str!("../web/styles.css");
+
+fn build_web_router() -> Router {
+    Router::new()
+        .route("/", get(|| async { Html(INDEX_HTML) }))
+        .route("/index.html", get(|| async { Html(INDEX_HTML) }))
+        .route(
+            "/main.js",
+            get(|| async { ([(header::CONTENT_TYPE, "application/javascript")], MAIN_JS) }),
+        )
+        .route(
+            "/styles.css",
+            get(|| async { ([(header::CONTENT_TYPE, "text/css")], STYLES_CSS) }),
+        )
+        .fallback(get(|| async { Html(INDEX_HTML) }))
 }
 
 async fn handle_websocket(ws: WebSocket) {
@@ -234,17 +253,9 @@ async fn main() {
 
     let _static_server = {
         let token = token.clone();
-        let web_router = Router::new().fallback_service(
-            get_service(ServeDir::new("web"))
-                .handle_error(|error: io::Error| async move {
-                    println!("static server error: {}", error);
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
-                })
-                .boxed_clone(),
-        );
         tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
-            axum::serve(listener, web_router)
+            axum::serve(listener, build_web_router())
                 .with_graceful_shutdown(token.cancelled_owned())
                 .into_future()
                 .await

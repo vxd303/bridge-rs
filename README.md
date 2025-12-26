@@ -29,6 +29,8 @@ The app ships with a local YA-WebADB console so you can work without visiting `t
 2) **Open the console**
    - The tray app automatically opens `http://localhost:8000/?desktop=true` on first launch.
    - You can also open it manually in your browser.
+   - The YA-WebADB assets are embedded in the binary, so `tango_bridge.exe` runs the console
+     without any extra Node.js server or copied `web/` folder.
 
 3) **Connect to your device**
    - Enable USB debugging on the Android device and plug it into the computer.
