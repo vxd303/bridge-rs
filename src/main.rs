@@ -3,6 +3,7 @@
 use std::{
     env,
     future::IntoFuture,
+    io,
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
@@ -16,7 +17,7 @@ use axum::{
         Request, WebSocketUpgrade,
     },
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, get_service},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -28,7 +29,7 @@ use tokio::{
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, services::ServeDir};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder, TrayIconEvent,
@@ -37,7 +38,7 @@ use tray_icon::{
 mod adb;
 
 fn start_browser() {
-    open::that_detached("https://app.tangoapp.dev/?desktop=true").unwrap();
+    open::that_detached("http://localhost:8000/?desktop=true").unwrap();
 }
 
 async fn handle_websocket(ws: WebSocket) {
@@ -96,9 +97,9 @@ async fn handle_websocket(ws: WebSocket) {
 const ARG_AUTO_RUN: &str = "--auto-run";
 
 #[cfg(debug_assertions)]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "http://localhost:8000";
 #[cfg(not(debug_assertions))]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "http://localhost:8000";
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -199,6 +200,8 @@ async fn main() {
                         .allow_origin(
                             [
                                 "http://localhost:3002",
+                                "http://localhost:8000",
+                                "http://127.0.0.1:8000",
                                 "https://tangoapp.dev",
                                 "https://app.tangoapp.dev",
                                 "https://beta.tangoapp.dev",
@@ -226,6 +229,23 @@ async fn main() {
                 .await
         });
         Some(server)
+    };
+
+    let _static_server = {
+        let token = token.clone();
+        let web_router = Router::new().fallback_service(
+            get_service(ServeDir::new("web")).handle_error(|error: io::Error| async move {
+                println!("static server error: {}", error);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
+            }),
+        );
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+            axum::serve(listener, web_router)
+                .with_graceful_shutdown(token.cancelled_owned())
+                .into_future()
+                .await
+        })
     };
     println!("server started on thread {:?}", thread::current().id());
 
