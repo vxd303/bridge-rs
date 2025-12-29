@@ -200,10 +200,7 @@ async fn main() {
                             [
                                 "http://localhost:3002",
                                 "http://localhost:8000",
-                                "https://tangoapp.dev",
-                                "https://app.tangoapp.dev",
                                 "https://app.hoadev.online",
-                                "https://tunnel.tangoapp.dev",
                             ]
                             .map(|x| x.parse().unwrap()),
                         )
@@ -212,7 +209,7 @@ async fn main() {
         )
         .fallback(proxy_request);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:15037")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:15038")
         .await
         .unwrap();
 
