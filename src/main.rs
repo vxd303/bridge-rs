@@ -16,15 +16,17 @@ use axum::{
         Request, WebSocketUpgrade,
     },
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use http::{Method, StatusCode};
 use reqwest::Url;
+use serde::Deserialize;
 use tao::event_loop::EventLoopBuilder;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
@@ -37,7 +39,7 @@ use tray_icon::{
 mod adb;
 
 fn start_browser() {
-    open::that_detached("https://app.tangoapp.dev/?desktop=true").unwrap();
+    open::that_detached("https://app.hoadev.online").unwrap();
 }
 
 async fn handle_websocket(ws: WebSocket) {
@@ -93,12 +95,52 @@ async fn handle_websocket(ws: WebSocket) {
     );
 }
 
+#[derive(Deserialize)]
+struct CloudflaredInstallRequest {
+    token: String,
+}
+
+#[axum::debug_handler]
+async fn install_cloudflared(
+    Json(payload): Json<CloudflaredInstallRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exe_path =
+        env::current_exe().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let cloudflared_path = exe_path.with_file_name("cloudflared.exe");
+
+    if !cloudflared_path.exists() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "cloudflared.exe không nằm cạnh thực thi: {}",
+                cloudflared_path.display()
+            ),
+        ));
+    }
+
+    let output = Command::new(&cloudflared_path)
+        .args(["service", "install", &payload.token])
+        .output()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(stdout)
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
+}
+
 const ARG_AUTO_RUN: &str = "--auto-run";
 
 #[cfg(debug_assertions)]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "https://app.hoadev.online";
 #[cfg(not(debug_assertions))]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "https://app.hoadev.online";
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -207,6 +249,7 @@ async fn main() {
                         .allow_private_network(true),
                 ),
         )
+        .route("/cloudflared/install", post(install_cloudflared))
         .fallback(proxy_request);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:15038")
