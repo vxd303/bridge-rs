@@ -20,7 +20,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use http::{Method, StatusCode};
+use http::{header::HOST, HeaderValue, Method, StatusCode};
 use reqwest::Url;
 use tao::event_loop::EventLoopBuilder;
 use tokio::{
@@ -28,7 +28,7 @@ use tokio::{
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, set_header::SetRequestHeaderLayer};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder, TrayIconEvent,
@@ -193,7 +193,19 @@ async fn main() {
                     "/",
                     get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
                 )
-                .route_layer(
+                // Support both `/bridge` and `/bridge/` so reverse proxies that
+                // normalize or strip trailing slashes (common with tunnels) still
+                // reach the WebSocket upgrade endpoint.
+                .route(
+                    "",
+                    get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
+                )
+                .route_layer((
+                    // Cloudflare Tunnel and some proxies rewrite the `Host` header to
+                    // the public hostname, but the local server expects `localhost`.
+                    // Force the host header so the WebSocket upgrade isn't rejected
+                    // when coming through a tunnel.
+                    SetRequestHeaderLayer::overriding(HOST, HeaderValue::from_static("localhost")),
                     CorsLayer::new()
                         .allow_methods([Method::GET, Method::POST])
                         .allow_origin(
@@ -205,11 +217,11 @@ async fn main() {
                             .map(|x| x.parse().unwrap()),
                         )
                         .allow_private_network(true),
-                ),
+                )),
         )
         .fallback(proxy_request);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:15038")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:15039")
         .await
         .unwrap();
 
