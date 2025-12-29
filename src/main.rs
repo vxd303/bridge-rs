@@ -2,7 +2,7 @@
 
 use std::{
     env,
-    fs::OpenOptions,
+    fs::{create_dir_all, OpenOptions},
     future::IntoFuture,
     io::Write,
     panic,
@@ -108,8 +108,22 @@ const PROXY_HOST: &str = "https://tangoapp.dev";
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+fn resolve_log_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(mut local_app_data) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            local_app_data.push("Tango Bridge");
+            if create_dir_all(&local_app_data).is_ok() {
+                return local_app_data.join("tango-bridge.log");
+            }
+        }
+    }
+
+    env::temp_dir().join("tango-bridge.log")
+}
+
 fn log_path() -> &'static PathBuf {
-    LOG_PATH.get_or_init(|| env::temp_dir().join("tango-bridge.log"))
+    LOG_PATH.get_or_init(resolve_log_path)
 }
 
 fn log_message(message: impl AsRef<str>) {
