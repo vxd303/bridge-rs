@@ -7,7 +7,6 @@ use std::{
     io::Write,
     panic,
     path::PathBuf,
-    sync::OnceLock,
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -35,7 +34,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tray_icon::{
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     TrayIconBuilder, TrayIconEvent,
 };
 
@@ -213,8 +212,6 @@ async fn proxy_request(request: Request) -> Result<Response, Response> {
         .into_response())
 }
 
-static SINGLE_INSTANCE: OnceLock<single_instance::SingleInstance> = OnceLock::new();
-
 #[tokio::main]
 async fn main() {
     install_panic_hook();
@@ -238,8 +235,7 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     {
         use single_instance::SingleInstance;
 
-        let single_instance = SINGLE_INSTANCE
-            .get_or_try_init(|| SingleInstance::new("tango-bridge-rs"))
+        let single_instance = SingleInstance::new("tango-bridge-rs")
             .map_err(|err| format!("Failed to check if app is already running: {err}"))?;
 
         log_message(format!(
@@ -353,10 +349,10 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
 
     let menu_quit = MenuItem::new("Quit", true, None);
 
-    let tray_menu = Menu::new().map_err(|err| format!("Failed to create tray menu: {err}"))?;
+    let tray_menu = Menu::new();
     tray_menu
         .append_items(&[
-            &menu_open,
+            &menu_open as &dyn IsMenuItem,
             &menu_auto_run,
             &PredefinedMenuItem::separator(),
             &menu_quit,
