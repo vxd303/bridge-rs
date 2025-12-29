@@ -7,6 +7,7 @@ use std::{
     io::Write,
     panic,
     path::PathBuf,
+    sync::OnceLock,
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -353,9 +354,9 @@ async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     tray_menu
         .append_items(&[
             &menu_open as &dyn IsMenuItem,
-            &menu_auto_run,
-            &PredefinedMenuItem::separator(),
-            &menu_quit,
+            &menu_auto_run as &dyn IsMenuItem,
+            &PredefinedMenuItem::separator() as &dyn IsMenuItem,
+            &menu_quit as &dyn IsMenuItem,
         ])
         .map_err(|err| format!("Failed to create tray items: {err}"))?;
 
