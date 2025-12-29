@@ -43,3 +43,14 @@ sudo apt install libgtk-3-dev libappindicator3-dev
 ```sh
 cargo build --release
 ```
+
+## Allowing additional web origins
+
+The Bridge WebSocket server is configured with a small default allowlist of web origins. If you need to expose the bridge through a reverse proxy or a Cloudflare Tunnel with a custom domain, add your origins as a comma-separated list in the `TANGO_BRIDGE_ALLOWED_ORIGINS` environment variable before starting the app:
+
+```sh
+export TANGO_BRIDGE_ALLOWED_ORIGINS="https://ws.mydomain.com,https://other.example.com"
+cargo run --release
+```
+
+Origins that cannot be parsed will be ignored with a warning in the logs.

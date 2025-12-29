@@ -20,7 +20,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use http::{Method, StatusCode};
+use http::{HeaderValue, Method, StatusCode};
 use reqwest::Url;
 use tao::event_loop::EventLoopBuilder;
 use tokio::{
@@ -194,19 +194,31 @@ async fn main() {
                     get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
                 )
                 .route_layer(
-                    CorsLayer::new()
-                        .allow_methods([Method::GET, Method::POST])
-                        .allow_origin(
-                            [
-                                "http://localhost:3002",
-                                "https://tangoapp.dev",
-                                "https://app.tangoapp.dev",
-                                "https://beta.tangoapp.dev",
-                                "https://tunnel.tangoapp.dev",
-                            ]
-                            .map(|x| x.parse().unwrap()),
-                        )
-                        .allow_private_network(true),
+                    {
+                        let mut allowed_origins: Vec<HeaderValue> = [
+                            "http://localhost:3002",
+                            "https://tangoapp.dev",
+                            "https://app.tangoapp.dev",
+                            "https://beta.tangoapp.dev",
+                            "https://tunnel.tangoapp.dev",
+                        ]
+                        .map(|x| x.parse().unwrap())
+                        .into();
+
+                        if let Ok(extra_origins) = env::var("TANGO_BRIDGE_ALLOWED_ORIGINS") {
+                            for origin in extra_origins.split(',').map(str::trim).filter(|o| !o.is_empty()) {
+                                match origin.parse() {
+                                    Ok(value) => allowed_origins.push(value),
+                                    Err(_) => eprintln!("Ignoring invalid origin in TANGO_BRIDGE_ALLOWED_ORIGINS: {origin}"),
+                                }
+                            }
+                        }
+
+                        CorsLayer::new()
+                            .allow_methods([Method::GET, Method::POST])
+                            .allow_origin(allowed_origins)
+                            .allow_private_network(true)
+                    },
                 ),
         )
         .fallback(proxy_request);
