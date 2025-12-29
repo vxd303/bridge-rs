@@ -54,3 +54,7 @@ cargo run --release
 ```
 
 Origins that cannot be parsed will be ignored with a warning in the logs.
+
+## Troubleshooting startup issues
+
+If the built executable closes immediately or no tray icon appears, the app now writes a log file to your temporary directory (for example `%TEMP%\\tango-bridge.log` on Windows). Any fatal errors are also shown in a native dialog when possible. Checking that log file should help identify missing dependencies or other startup failures.

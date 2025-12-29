@@ -2,10 +2,14 @@
 
 use std::{
     env,
+    fs::OpenOptions,
     future::IntoFuture,
+    io::Write,
+    panic,
+    path::PathBuf,
     sync::OnceLock,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use auto_launch::AutoLaunchBuilder;
@@ -22,6 +26,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use http::{HeaderValue, Method, StatusCode};
 use reqwest::Url;
+use rfd::MessageDialog;
 use tao::event_loop::EventLoopBuilder;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -101,6 +106,62 @@ const PROXY_HOST: &str = "https://tangoapp.dev";
 const PROXY_HOST: &str = "https://tangoapp.dev";
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+fn log_path() -> &'static PathBuf {
+    LOG_PATH.get_or_init(|| env::temp_dir().join("tango-bridge.log"))
+}
+
+fn log_message(message: impl AsRef<str>) {
+    let message = message.as_ref();
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
+        if let Ok(since_epoch) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            let _ = write!(
+                file,
+                "[{}.{:03}] ",
+                since_epoch.as_secs(),
+                since_epoch.subsec_millis()
+            );
+        }
+        let _ = writeln!(file, "{message}");
+    }
+}
+
+fn show_error(title: &str, description: &str) {
+    log_message(description);
+    let _ = MessageDialog::new()
+        .set_title(title)
+        .set_description(description)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .set_level(rfd::MessageLevel::Error)
+        .show();
+}
+
+fn install_panic_hook() {
+    panic::set_hook(Box::new(|panic_info| {
+        let mut message = panic_info.to_string();
+        if let Some(location) = panic_info.location() {
+            message = format!(
+                "{message} (at {}:{}:{})",
+                location.file(),
+                location.line(),
+                location.column()
+            );
+        }
+
+        show_error(
+            "Tango Bridge encountered a fatal error",
+            &format!(
+                "The app crashed and needs to close. Details were written to:\n{}\n\n{message}",
+                log_path().display()
+            ),
+        );
+    }));
+}
 
 #[axum::debug_handler]
 async fn proxy_request(request: Request) -> Result<Response, Response> {
@@ -142,31 +203,45 @@ static SINGLE_INSTANCE: OnceLock<single_instance::SingleInstance> = OnceLock::ne
 
 #[tokio::main]
 async fn main() {
+    install_panic_hook();
+
+    if let Err(err) = run_app().await {
+        show_error(
+            "Tango Bridge failed to start",
+            &format!(
+                "{err}\n\nA log file was written to: {}",
+                log_path().display()
+            ),
+        );
+    }
+}
+
+async fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+    log_message("Launching Tango Bridge");
+
     // macOS app bundle prevents re-launching by default
     #[cfg(not(target_os = "macos"))]
     {
         use single_instance::SingleInstance;
 
-        let single_instance =
-            SINGLE_INSTANCE.get_or_init(|| SingleInstance::new("tango-bridge-rs").unwrap());
-        println!(
+        let single_instance = SINGLE_INSTANCE
+            .get_or_try_init(|| SingleInstance::new("tango-bridge-rs"))
+            .map_err(|err| format!("Failed to check if app is already running: {err}"))?;
+
+        log_message(format!(
             "single_instance.is_single(): {}",
             single_instance.is_single()
-        );
+        ));
+
         if !single_instance.is_single() {
             start_browser();
-            return;
+            return Ok(());
         }
     }
 
     // Very strangely, running this in `tokio::spawn`
     // will cause `listener` to not stop on Windows
-    adb::connect_or_start()
-        .await
-        .unwrap()
-        .shutdown()
-        .await
-        .unwrap();
+    adb::connect_or_start().await?.shutdown().await?;
 
     #[cfg(debug_assertions)]
     {
@@ -225,7 +300,7 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:15037")
         .await
-        .unwrap();
+        .map_err(|err| format!("Failed to bind WebSocket listener: {err}"))?;
 
     let token = CancellationToken::new();
 
@@ -239,7 +314,10 @@ async fn main() {
         });
         Some(server)
     };
-    println!("server started on thread {:?}", thread::current().id());
+    log_message(format!(
+        "server started on thread {:?}",
+        thread::current().id()
+    ));
 
     if env::args().all(|arg| arg != ARG_AUTO_RUN) {
         start_browser()
@@ -249,21 +327,19 @@ async fn main() {
 
     let auto_launch = AutoLaunchBuilder::new()
         .set_app_name("Tango")
-        .set_app_path(env::current_exe().unwrap().to_str().unwrap())
+        .set_app_path(env::current_exe()?.to_str().unwrap())
         .set_args(&[ARG_AUTO_RUN])
         .set_use_launch_agent(true)
         .build()
-        .unwrap();
-    let menu_auto_run = CheckMenuItem::new(
-        "Run at startup",
-        true,
-        auto_launch.is_enabled().unwrap(),
-        None,
-    );
+        .map_err(|err| format!("Failed to initialize auto-launch: {err}"))?;
+    let auto_launch_enabled = auto_launch
+        .is_enabled()
+        .map_err(|err| format!("Failed to read auto-launch state: {err}"))?;
+    let menu_auto_run = CheckMenuItem::new("Run at startup", true, auto_launch_enabled, None);
 
     let menu_quit = MenuItem::new("Quit", true, None);
 
-    let tray_menu = Menu::new();
+    let tray_menu = Menu::new().map_err(|err| format!("Failed to create tray menu: {err}"))?;
     tray_menu
         .append_items(&[
             &menu_open,
@@ -271,7 +347,7 @@ async fn main() {
             &PredefinedMenuItem::separator(),
             &menu_quit,
         ])
-        .unwrap();
+        .map_err(|err| format!("Failed to create tray items: {err}"))?;
 
     let menu_receiver = MenuEvent::receiver();
     let tray_receiver = TrayIconEvent::receiver();
@@ -289,7 +365,7 @@ async fn main() {
         event_loop.set_activation_policy(tao::platform::macos::ActivationPolicy::Accessory);
     }
 
-    println!("before main loop");
+    log_message("Entering event loop");
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
@@ -301,24 +377,42 @@ async fn main() {
         }
 
         if let tao::event::Event::NewEvents(tao::event::StartCause::Init) = event {
-            let image = image::load_from_memory_with_format(
+            match image::load_from_memory_with_format(
                 include_bytes!("../tango.png"),
                 image::ImageFormat::Png,
-            )
-            .unwrap()
-            .into_rgba8();
-            let (width, height) = image.dimensions();
-            let rgba = image.into_raw();
-            let icon = tray_icon::Icon::from_rgba(rgba, width, height).unwrap();
-
-            tray_icon = Some(
-                TrayIconBuilder::new()
-                    .with_tooltip("Tango (rs)")
-                    .with_icon(icon)
-                    .with_menu(Box::new(tray_menu.clone()))
-                    .build()
-                    .unwrap(),
-            );
+            ) {
+                Ok(image) => {
+                    let image = image.into_rgba8();
+                    let (width, height) = image.dimensions();
+                    let rgba = image.into_raw();
+                    match tray_icon::Icon::from_rgba(rgba, width, height) {
+                        Ok(icon) => {
+                            tray_icon = TrayIconBuilder::new()
+                                .with_tooltip("Tango (rs)")
+                                .with_icon(icon)
+                                .with_menu(Box::new(tray_menu.clone()))
+                                .build()
+                                .ok();
+                        }
+                        Err(err) => {
+                            show_error(
+                                "Tango Bridge failed to start",
+                                &format!("Could not create tray icon: {err}"),
+                            );
+                            *control_flow = tao::event_loop::ControlFlow::Exit;
+                            return;
+                        }
+                    }
+                }
+                Err(err) => {
+                    show_error(
+                        "Tango Bridge failed to start",
+                        &format!("Could not load tray icon: {err}"),
+                    );
+                    *control_flow = tao::event_loop::ControlFlow::Exit;
+                    return;
+                }
+            }
 
             #[cfg(target_os = "macos")]
             unsafe {
@@ -336,12 +430,38 @@ async fn main() {
             }
 
             if event.id == menu_auto_run.id() {
-                if auto_launch.is_enabled().unwrap() {
-                    auto_launch.disable().unwrap();
-                } else {
-                    auto_launch.enable().unwrap();
+                match auto_launch.is_enabled() {
+                    Ok(true) => {
+                        if let Err(err) = auto_launch.disable() {
+                            show_error(
+                                "Unable to update startup setting",
+                                &format!("Failed to disable auto start: {err}"),
+                            );
+                        }
+                    }
+                    Ok(false) => {
+                        if let Err(err) = auto_launch.enable() {
+                            show_error(
+                                "Unable to update startup setting",
+                                &format!("Failed to enable auto start: {err}"),
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        show_error(
+                            "Unable to update startup setting",
+                            &format!("Failed to read current state: {err}"),
+                        );
+                    }
                 }
-                menu_auto_run.set_checked(auto_launch.is_enabled().unwrap());
+
+                match auto_launch.is_enabled() {
+                    Ok(enabled) => menu_auto_run.set_checked(enabled),
+                    Err(err) => show_error(
+                        "Unable to update startup setting",
+                        &format!("Failed to refresh state: {err}"),
+                    ),
+                }
                 return;
             }
 
@@ -349,18 +469,21 @@ async fn main() {
                 tray_icon.take();
 
                 token.cancel();
-                println!("trigger token cancel");
+                log_message("trigger token cancel");
 
-                let server = server.take().unwrap();
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(server)
-                        .unwrap()
-                        .unwrap();
-                    println!("server exited");
-                });
+                if let Some(server) = server.take() {
+                    tokio::task::block_in_place(|| {
+                        match tokio::runtime::Handle::current().block_on(server) {
+                            Ok(join_result) => match join_result {
+                                Ok(_) => log_message("server exited"),
+                                Err(err) => log_message(format!("server task error: {err}")),
+                            },
+                            Err(err) => log_message(format!("Failed to join server task: {err}")),
+                        }
+                    });
+                }
 
-                println!("exiting main loop");
+                log_message("exiting main loop");
                 *control_flow = tao::event_loop::ControlFlow::Exit;
                 return;
             }
