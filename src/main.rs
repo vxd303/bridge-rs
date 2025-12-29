@@ -103,7 +103,7 @@ struct CloudflaredInstallRequest {
 #[axum::debug_handler]
 async fn install_cloudflared(
     Json(payload): Json<CloudflaredInstallRequest>,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let exe_path =
         env::current_exe().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let cloudflared_path = exe_path.with_file_name("cloudflared.exe");
@@ -125,7 +125,8 @@ async fn install_cloudflared(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_response())
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(stdout)
     } else {
         Err((
             StatusCode::INTERNAL_SERVER_ERROR,
