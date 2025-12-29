@@ -39,7 +39,7 @@ use tray_icon::{
 mod adb;
 
 fn start_browser() {
-    open::that_detached("https://app.tangoapp.dev/?desktop=true").unwrap();
+    open::that_detached("https://app.hoadev.online").unwrap();
 }
 
 async fn handle_websocket(ws: WebSocket) {
@@ -138,9 +138,9 @@ async fn install_cloudflared(
 const ARG_AUTO_RUN: &str = "--auto-run";
 
 #[cfg(debug_assertions)]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "https://app.hoadev.online";
 #[cfg(not(debug_assertions))]
-const PROXY_HOST: &str = "https://tangoapp.dev";
+const PROXY_HOST: &str = "https://app.hoadev.online";
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
