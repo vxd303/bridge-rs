@@ -193,6 +193,13 @@ async fn main() {
                     "/",
                     get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
                 )
+                // Support both `/bridge` and `/bridge/` so reverse proxies that
+                // normalize or strip trailing slashes (common with tunnels) still
+                // reach the WebSocket upgrade endpoint.
+                .route(
+                    "",
+                    get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
+                )
                 .route_layer(
                     CorsLayer::new()
                         .allow_methods([Method::GET, Method::POST])
