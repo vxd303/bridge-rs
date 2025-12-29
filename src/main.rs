@@ -199,9 +199,10 @@ async fn main() {
                         .allow_origin(
                             [
                                 "http://localhost:3002",
+                                "http://localhost:8000",
                                 "https://tangoapp.dev",
                                 "https://app.tangoapp.dev",
-                                "https://beta.tangoapp.dev",
+                                "https://app.hoadev.online",
                                 "https://tunnel.tangoapp.dev",
                             ]
                             .map(|x| x.parse().unwrap()),
