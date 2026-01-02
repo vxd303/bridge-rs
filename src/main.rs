@@ -3,6 +3,8 @@
 use std::{
     env,
     future::IntoFuture,
+    io,
+    net::SocketAddr,
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
@@ -13,18 +15,22 @@ use axum::{
     body::Bytes,
     extract::{
         ws::{Message, WebSocket},
-        Request, WebSocketUpgrade,
+        Request, State, WebSocketUpgrade,
     },
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
+use ctrlc;
 use futures_util::{SinkExt, StreamExt};
 use http::{Method, StatusCode};
 use reqwest::Url;
+use serde::Deserialize;
+use socket2::{Domain, Protocol, Socket, Type};
 use tao::event_loop::EventLoopBuilder;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
     sync::mpsc::channel,
 };
 use tokio_util::sync::CancellationToken;
@@ -40,42 +46,47 @@ fn start_browser() {
     open::that_detached("https://app.tangoapp.dev/?desktop=true").unwrap();
 }
 
-async fn handle_websocket(ws: WebSocket) {
+async fn bridge_ws_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_websocket(state, socket))
+}
+
+#[derive(Clone)]
+struct AppState {
+    shutdown: CancellationToken,
+}
+
+async fn handle_websocket(state: AppState, ws: WebSocket) {
+    let shutdown = state.shutdown.clone();
+
     let (mut ws_writer, mut ws_reader) = ws.split();
     let (mut adb_reader, mut adb_writer) = adb::connect_or_start().await.unwrap().into_split();
 
     let (ws_to_adb_sender, mut ws_to_adb_receiver) = channel::<Bytes>(16);
     let (adb_to_ws_sender, mut adb_to_ws_receiver) = channel::<Vec<u8>>(16);
 
+    let shutdown_ws_reader = shutdown.clone();
+    let shutdown_adb_writer = shutdown.clone();
+    let shutdown_adb_reader = shutdown.clone();
+    let shutdown_ws_writer = shutdown;
+
     tokio::join!(
         async move {
-            while let Some(Ok(message)) = ws_reader.next().await {
-                // Don't merge with `if` above to ignore other message types
-                if let Message::Binary(packet) = message {
-                    if ws_to_adb_sender.send(packet).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        },
-        async move {
-            while let Some(buf) = ws_to_adb_receiver.recv().await {
-                if adb_writer.write_all(buf.as_ref()).await.is_err() {
-                    break;
-                }
-            }
-            adb_writer.shutdown().await.unwrap();
-        },
-        async move {
             loop {
-                let mut buf = vec![0; 1024 * 1024];
-                match adb_reader.read(&mut buf).await {
-                    Ok(0) | Err(_) => {
+                tokio::select! {
+                    _ = shutdown_ws_reader.cancelled() => {
                         break;
                     }
-                    Ok(n) => {
-                        buf.truncate(n);
-                        if adb_to_ws_sender.send(buf).await.is_err() {
+                    maybe_message = ws_reader.next() => {
+                        if let Some(Ok(message)) = maybe_message {
+                            if let Message::Binary(packet) = message {
+                                if ws_to_adb_sender.send(packet).await.is_err() {
+                                    break;
+                                }
+                            }
+                        } else {
                             break;
                         }
                     }
@@ -83,14 +94,105 @@ async fn handle_websocket(ws: WebSocket) {
             }
         },
         async move {
-            while let Some(buf) = adb_to_ws_receiver.recv().await {
-                if ws_writer.send(Message::binary(buf)).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    _ = shutdown_adb_writer.cancelled() => {
+                        break;
+                    }
+                    Some(buf) = ws_to_adb_receiver.recv() => {
+                        if adb_writer.write_all(buf.as_ref()).await.is_err() {
+                            break;
+                        }
+                    }
+                    else => break,
                 }
             }
-            ws_writer.close().await.unwrap();
+            if let Err(err) = adb_writer.shutdown().await {
+                eprintln!("Failed to shutdown ADB writer cleanly: {err}");
+            }
+        },
+        async move {
+            loop {
+                let mut buf = vec![0; 1024 * 1024];
+                tokio::select! {
+                    _ = shutdown_adb_reader.cancelled() => {
+                        break;
+                    }
+                    read_result = adb_reader.read(&mut buf) => {
+                        match read_result {
+                            Ok(0) | Err(_) => {
+                                break;
+                            }
+                            Ok(n) => {
+                                buf.truncate(n);
+                                if adb_to_ws_sender.send(buf).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_ws_writer.cancelled() => {
+                        break;
+                    }
+                    Some(buf) = adb_to_ws_receiver.recv() => {
+                        if ws_writer.send(Message::binary(buf)).await.is_err() {
+                            break;
+                        }
+                    }
+                    else => break,
+                }
+            }
+            if let Err(err) = ws_writer.close().await {
+                eprintln!("Failed to close websocket cleanly: {err}");
+            }
         }
     );
+}
+
+#[derive(Deserialize)]
+struct CloudflaredInstallRequest {
+    token: String,
+}
+
+#[axum::debug_handler]
+async fn install_cloudflared(
+    Json(payload): Json<CloudflaredInstallRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exe_path =
+        env::current_exe().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let cloudflared_path = exe_path.with_file_name("cloudflared.exe");
+
+    if !cloudflared_path.exists() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "cloudflared.exe không nằm cạnh thực thi: {}",
+                cloudflared_path.display()
+            ),
+        ));
+    }
+
+    let output = Command::new(&cloudflared_path)
+        .args(["service", "install", &payload.token])
+        .output()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(stdout)
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
 }
 
 const ARG_AUTO_RUN: &str = "--auto-run";
@@ -101,6 +203,16 @@ const PROXY_HOST: &str = "https://tangoapp.dev";
 const PROXY_HOST: &str = "https://tangoapp.dev";
 
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn bind_reusable_listener(addr: SocketAddr) -> io::Result<tokio::net::TcpListener> {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+
+    tokio::net::TcpListener::from_std(socket.into())
+}
 
 #[axum::debug_handler]
 async fn proxy_request(request: Request) -> Result<Response, Response> {
@@ -184,15 +296,17 @@ async fn main() {
             .expect("setting default subscriber failed");
     }
 
+    let shutdown_token = CancellationToken::new();
+    let state = AppState {
+        shutdown: shutdown_token.clone(),
+    };
+
     let app = Router::new()
         .nest(
             "/bridge",
             Router::new()
                 .route("/ping", get(|| async { env!("CARGO_PKG_VERSION") }))
-                .route(
-                    "/",
-                    get(|ws: WebSocketUpgrade| async { ws.on_upgrade(handle_websocket) }),
-                )
+                .route("/", get(bridge_ws_handler))
                 .route_layer(
                     CorsLayer::new()
                         .allow_methods([Method::GET, Method::POST])
@@ -205,18 +319,24 @@ async fn main() {
                             .map(|x| x.parse().unwrap()),
                         )
                         .allow_private_network(true),
-                ),
+                )
+                .with_state(state.clone()),
         )
-        .fallback(proxy_request);
+        .route("/cloudflared/install", post(install_cloudflared))
+        .fallback(proxy_request)
+        .with_state(state.clone());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:15038")
-        .await
-        .unwrap();
-
-    let token = CancellationToken::new();
+    let addr: SocketAddr = "0.0.0.0:15038".parse().unwrap();
+    let listener = match bind_reusable_listener(addr) {
+        Ok(listener) => listener,
+        Err(err) => {
+            eprintln!("Failed to bind listener at {addr}: {err}");
+            return;
+        }
+    };
 
     let mut server = {
-        let token = token.clone();
+        let token = shutdown_token.clone();
         let server = tokio::spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(token.cancelled_owned())
@@ -266,6 +386,18 @@ async fn main() {
 
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::new().build();
+    let event_loop_proxy = event_loop.create_proxy();
+
+    let shutdown_for_signal = shutdown_token.clone();
+    let proxy_for_signal = event_loop_proxy.clone();
+    ctrlc::set_handler(move || {
+        println!("Shutting down gracefully (Ctrl+C)...");
+        shutdown_for_signal.cancel();
+        if let Err(err) = proxy_for_signal.send_event(()) {
+            eprintln!("Failed to signal event loop shutdown: {err}");
+        }
+    })
+    .expect("Error setting Ctrl-C handler");
 
     #[cfg(target_os = "macos")]
     {
@@ -280,6 +412,26 @@ async fn main() {
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
             tao::event_loop::ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16));
+
+        if let tao::event::Event::UserEvent(()) = event {
+            tray_icon.take();
+
+            shutdown_token.cancel();
+
+            if let Some(server) = server.take() {
+                tokio::task::block_in_place(|| {
+                    match tokio::runtime::Handle::current().block_on(server) {
+                        Ok(Ok(())) => println!("server exited"),
+                        Ok(Err(err)) => eprintln!("server exited with error: {err}"),
+                        Err(join_err) => eprintln!("failed to join server task: {join_err}"),
+                    }
+                });
+            }
+
+            println!("exiting main loop");
+            *control_flow = tao::event_loop::ControlFlow::Exit;
+            return;
+        }
 
         if let tao::event::Event::Reopen { .. } = event {
             start_browser();
@@ -334,17 +486,18 @@ async fn main() {
             if event.id == menu_quit.id() {
                 tray_icon.take();
 
-                token.cancel();
+                shutdown_token.cancel();
                 println!("trigger token cancel");
 
-                let server = server.take().unwrap();
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(server)
-                        .unwrap()
-                        .unwrap();
-                    println!("server exited");
-                });
+                if let Some(server) = server.take() {
+                    tokio::task::block_in_place(|| {
+                        match tokio::runtime::Handle::current().block_on(server) {
+                            Ok(Ok(())) => println!("server exited"),
+                            Ok(Err(err)) => eprintln!("server exited with error: {err}"),
+                            Err(join_err) => eprintln!("failed to join server task: {join_err}"),
+                        }
+                    });
+                }
 
                 println!("exiting main loop");
                 *control_flow = tao::event_loop::ControlFlow::Exit;

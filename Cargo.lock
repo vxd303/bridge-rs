@@ -2367,6 +2367,7 @@ dependencies = [
  "image",
  "open",
  "reqwest",
+ "serde",
  "single-instance",
  "tao",
  "tokio",
