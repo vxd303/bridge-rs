@@ -43,3 +43,9 @@ sudo apt install libgtk-3-dev libappindicator3-dev
 ```sh
 cargo build --release
 ```
+
+## Cloudflare Tunnel note
+
+If you expose the bridge over Cloudflare Tunnel for WebSocket access, see `docs/cloudflare-tunnel-token.md` for guidance on using connector tokens securely with a named tunnel and ensuring traffic still reaches `http://127.0.0.1:15038/bridge`.
+
+To let end users install the Cloudflare connector as a Windows service using a token, ship `cloudflared.exe` next to `tango_bridge.exe` and call the local installer endpoint described in `docs/cloudflared-service-endpoint.md`.
