@@ -67,11 +67,16 @@ async fn handle_websocket(state: AppState, ws: WebSocket) {
     let (ws_to_adb_sender, mut ws_to_adb_receiver) = channel::<Bytes>(16);
     let (adb_to_ws_sender, mut adb_to_ws_receiver) = channel::<Vec<u8>>(16);
 
+    let shutdown_ws_reader = shutdown.clone();
+    let shutdown_adb_writer = shutdown.clone();
+    let shutdown_adb_reader = shutdown.clone();
+    let shutdown_ws_writer = shutdown;
+
     tokio::join!(
         async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.cancelled() => {
+                    _ = shutdown_ws_reader.cancelled() => {
                         break;
                     }
                     maybe_message = ws_reader.next() => {
@@ -91,7 +96,7 @@ async fn handle_websocket(state: AppState, ws: WebSocket) {
         async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.cancelled() => {
+                    _ = shutdown_adb_writer.cancelled() => {
                         break;
                     }
                     Some(buf) = ws_to_adb_receiver.recv() => {
@@ -110,7 +115,7 @@ async fn handle_websocket(state: AppState, ws: WebSocket) {
             loop {
                 let mut buf = vec![0; 1024 * 1024];
                 tokio::select! {
-                    _ = shutdown.cancelled() => {
+                    _ = shutdown_adb_reader.cancelled() => {
                         break;
                     }
                     read_result = adb_reader.read(&mut buf) => {
@@ -132,7 +137,7 @@ async fn handle_websocket(state: AppState, ws: WebSocket) {
         async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.cancelled() => {
+                    _ = shutdown_ws_writer.cancelled() => {
                         break;
                     }
                     Some(buf) = adb_to_ws_receiver.recv() => {

@@ -104,7 +104,15 @@ pub async fn connect_or_start() -> tokio::io::Result<TcpStream> {
 
     #[cfg(target_os = "macos")]
     {
-        adb_start(env::current_exe().unwrap().parent().unwrap().join("adb").as_path()).await?;
+        adb_start(
+            env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("adb")
+                .as_path(),
+        )
+        .await?;
     }
 
     adb_connect_retry().await
